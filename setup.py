@@ -10,6 +10,7 @@ deps = [
     'mozillapulse',
     'mock',
     'requests',
+    'mozci',
 ]
 
 setup(name='trigger-bot',

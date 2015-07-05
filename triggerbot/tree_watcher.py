@@ -12,6 +12,7 @@ import time
 
 from threading import Timer
 from collections import defaultdict
+from mozci.query_jobs import TreeherderApi
 
 
 class TreeWatcher(object):
@@ -57,8 +58,10 @@ class TreeWatcher(object):
         self.auth = ldap_auth
         self.lower_trigger_limit = TreeWatcher.default_retry * TreeWatcher.per_push_failures
         self.log = logging.getLogger('trigger-bot')
+        logging.basicConfig()
         self.is_triggerbot_user = is_triggerbot_user
         self.global_trigger_count = 0
+        self.revision_data = TreeherderApi()
 
     def _prune_revmap(self):
         # After a certain point we'll need to prune our revmap so it doesn't grow
@@ -221,7 +224,7 @@ class TreeWatcher(object):
         if build_data is None:
             return
 
-        found_buildid, found_requestid, builder_total, rev_total = build_data
+        found_requestid, builder_total, rev_total = build_data
 
         if builder_total > count:
             self.log.warning('Would have triggered %d of "%s" at %s, but we\'ve already'
@@ -254,10 +257,7 @@ class TreeWatcher(object):
             'count': count,
         }
 
-        if found_buildid:
-            build_url = '%s/%s/build' % (root_url, branch)
-            payload['build_id'] = found_buildid
-        elif found_requestid:
+        if found_requestid:
             build_url = '%s/%s/request' % (root_url, branch)
             payload['request_id'] = found_requestid
         else:
@@ -285,37 +285,20 @@ class TreeWatcher(object):
 
 
     def _get_ids_for_rev(self, branch, rev, builder):
-        # Get the request or build id associated with the given branch/rev/builder,
-        # if any.
-        root_url = 'https://secure.pub.build.mozilla.org/buildapi/self-serve'
-
-        # First find the build_id for the job to rebuild
-        build_info_url = '%s/%s/rev/%s?format=json' % (root_url, branch, rev)
-        info_req = requests.get(build_info_url,
-                                headers={'Accept': 'application/json'},
-                                auth=self.auth)
-        found_buildid = None
+        # Get the request associated with the given branch/rev/builder, if any.
         found_requestid = None
         builder_total, rev_total = 0, 0
 
-        try:
-            results = info_req.json()
-        except ValueError:
-            self.log.error('Received an unexpected ValueError when retrieving '
-                           'information about %s from buildapi.' % rev)
-            self.log.error('Request status: %d' % info_req.status_code)
+        rev_total = len(self.revision_data._get_all_jobs(branch, rev))
+        if not rev_total:
+            self.log.error('There are no jobs for the branch %s and rev %s' % (branch, rev))
             return None
+        builders = self.revision_data.get_matching_jobs(branch, rev, builder)
+        builder_total = len(builders)
+        found_requestid = self.revision_data.get_buildapi_request_id(branch, builders[0])
 
-        for res in results:
-            rev_total += 1
-            if res['buildername'] == builder:
-                builder_total += 1
-                if 'build_id' in res and not found_buildid:
-                    found_buildid = res['build_id']
-                if 'request_id' in res and not found_requestid:
-                    found_requestid = res['request_id']
+        return found_requestid, builder_total, rev_total
 
-        return found_buildid, found_requestid, builder_total, rev_total
 
     def _rebuild(self, build_url, payload):
         # Actually do the triggering for a url and payload and keep track of the result.
