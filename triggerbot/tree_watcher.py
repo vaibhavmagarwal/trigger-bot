@@ -48,6 +48,7 @@ class TreeWatcher(object):
         self.auth = ldap_auth
         self.lower_trigger_limit = TreeWatcher.default_retry * TreeWatcher.per_push_failures
         self.log = logging.getLogger('trigger-bot')
+        logging.basicConfig()
         self.is_triggerbot_user = is_triggerbot_user
         self.global_trigger_count = 0
         self.treeherder_client = TreeherderClient()
